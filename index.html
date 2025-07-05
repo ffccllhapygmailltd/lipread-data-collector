@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>Lip‑read Data Collector</title>
+  <style>
+    body { font-family: sans-serif; }
+    video, canvas { position: absolute; top: 0; left: 0; }
+    #controls { position: absolute; top: 490px; }
+  </style>
+</head>
+<body>
+  <video id="video" autoplay muted playsinline width="640" height="480"></video>
+  <canvas id="canvas" width="640" height="480"></canvas>
+  <div id="controls">
+    <button id="recordBtn">開始錄製</button>
+    <button id="stopBtn" disabled>停止錄製</button>
+    <input id="labelInput" placeholder="輸入你說的詞">
+    <button id="saveBtn" disabled>儲存片段</button>
+    <button id="downloadBtn">下載所有資料</button>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.0/dist/jszip.min.js"></script>
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const recordBtn = document.getElementById('recordBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const saveBtn = document.getElementById('saveBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const labelInput = document.getElementById('labelInput');
+    let recorder, chunks = [], clips = [];
+
+    const faceMesh = new FaceMesh({locateFile: f=>`https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${f}`});
+    faceMesh.setOptions({maxNumFaces:1, refineLandmarks:true, minDetectionConfidence:0.5, minTrackingConfidence:0.5});
+    faceMesh.onResults(results => {
+      ctx.save(); ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.drawImage(results.image,0,0,canvas.width,canvas.height);
+      if (results.multiFaceLandmarks) {
+        ctx.strokeStyle = 'lime'; ctx.lineWidth = 2;
+        const con = FaceMesh.FACEMESH_LIPS || FaceMesh.facemesh.LIPS;
+        for (const landmarks of results.multiFaceLandmarks) {
+          for (const [s,e] of con) {
+            const a = landmarks[s], b = landmarks[e];
+            ctx.beginPath();
+            ctx.moveTo(a.x*canvas.width, a.y*canvas.height);
+            ctx.lineTo(b.x*canvas.width, b.y*canvas.height);
+            ctx.stroke();
+          }
+        }
+      }
+      ctx.restore();
+    });
+
+    new Camera(video, {onFrame:()=>faceMesh.send({image:video}), width:640, height:480}).start();
+
+    recordBtn.onclick = async () => {
+      chunks = [];
+      recorder = new MediaRecorder(canvas.captureStream(30));
+      recorder.ondataavailable = e => chunks.push(e.data);
+      recorder.start();
+      recordBtn.disabled = true; stopBtn.disabled = false;
+    };
+
+    stopBtn.onclick = () => {
+      recorder.stop();
+      stopBtn.disabled = true;
+      saveBtn.disabled = false;
+    };
+
+    saveBtn.onclick = () => {
+      const blob = new Blob(chunks, { type: 'video/webm' });
+      clips.push({ blob, label: labelInput.value || 'unknown' });
+      recordBtn.disabled = false;
+      saveBtn.disabled = true;
+      labelInput.value = '';
+    };
+
+    downloadBtn.onclick = async () => {
+      const zip = new JSZip();
+      clips.forEach((c,i) => {
+        zip.file(`clip_${i}_${c.label}.webm`, c.blob);
+        zip.file(`label_${i}.txt`, c.label);
+      });
+      const content = await zip.generateAsync({ type: 'blob' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(content);
+      a.download = 'lip_read_data.zip';
+      a.click();
+    };
+  </script>
+</body>
+</html>
